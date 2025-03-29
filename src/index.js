@@ -56,7 +56,7 @@ async function handleM3u8Proxy(request) {
 			headers,
 			redirect: 'follow',
 		});
-
+		console.log(response);
 		if (!response.ok) {
 			console.error(`Upstream server error: ${response.status} ${response.statusText}`);
 			return corsResponse(`Upstream server error: ${response.status} ${response.statusText}`, response.status);
