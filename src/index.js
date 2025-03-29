@@ -57,6 +57,9 @@ async function handleM3u8Proxy(request) {
 		const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
 		const basePath = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
 
+		// Get the current origin for building absolute URLs
+		const proxyOrigin = url.origin;
+
 		// Replace relative URLs with absolute ones and route through our proxy
 		const lines = m3u8Content.split('\n');
 		const modifiedLines = lines.map((line) => {
@@ -77,18 +80,22 @@ async function handleM3u8Proxy(request) {
 							}
 						}
 						// Replace with proxied key URL
-						const proxyKeyUrl = `${url.origin}/proxy/key?url=${encodeURIComponent(keyUrl)}&headers=${encodeURIComponent(
+						const proxyKeyUrl = `${proxyOrigin}/proxy/key?url=${encodeURIComponent(keyUrl)}&headers=${encodeURIComponent(
 							headersParam || ''
 						)}`;
 						return line.replace(keyPattern, `$1${proxyKeyUrl}$3`);
 					}
 				}
 				return line;
-			} else if (line.startsWith('#') || line.trim() === '') {
+			} else if (line.startsWith('#')) {
+				// Pass through all other tags unchanged
+				return line;
+			} else if (line.trim() === '') {
+				// Pass through empty lines
 				return line;
 			}
 
-			// Handle relative URLs
+			// Handle content lines (usually URLs to segments or other playlists)
 			let absoluteUrl;
 			if (line.startsWith('http')) {
 				absoluteUrl = line;
@@ -100,10 +107,13 @@ async function handleM3u8Proxy(request) {
 
 			// Check if this is another m3u8 file (variant playlist)
 			if (line.endsWith('.m3u8')) {
-				return `${url.origin}/proxy/m3u8?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
+				return `${proxyOrigin}/proxy/m3u8?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
+			} else if (line.match(/\.(ts|aac|mp4|vtt|webvtt)($|\?)/i)) {
+				// For ts segments and other media files
+				return `${proxyOrigin}/proxy/segment?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
 			} else {
-				// For ts segments and other files
-				return `${url.origin}/proxy/segment?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
+				// For any other files, also proxy them as segments
+				return `${proxyOrigin}/proxy/segment?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
 			}
 		});
 
