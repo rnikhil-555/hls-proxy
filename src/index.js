@@ -463,7 +463,6 @@ export default {
 			} else if (path === '/proxy/key') {
 				return await handleKeyProxy(request);
 			} else {
-				// Catch-all for any other requests
 				return corsResponse('Not Found', 404);
 			}
 		} catch (error) {
