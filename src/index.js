@@ -46,44 +46,69 @@ async function handleM3u8Proxy(request) {
 			'Accept-Language': 'en-US,en;q=0.9',
 			Referer: 'https://megacloud.club' || new URL(targetUrl).origin,
 			Connection: 'keep-alive',
+			'X-Forwarded-For': request.headers.get('cf-connecting-ip') || '127.0.0.1',
+			'X-Real-IP': request.headers.get('cf-connecting-ip') || '127.0.0.1',
 			...customHeaders,
 		};
 
 		// Log the headers we're sending
 		console.log('Request headers:', JSON.stringify(headers));
 
-		const response = await fetch(targetUrl, {
+		// First try with Cloudflare Worker
+		let response = await fetch(targetUrl, {
 			headers,
 			redirect: 'follow',
 		});
-		console.log(response);
-		if (!response.ok) {
-			console.error(`Upstream server error: ${response.status} ${response.statusText}`);
-			return corsResponse(`Upstream server error: ${response.status} ${response.statusText}`, response.status);
+
+		let m3u8Content = '';
+		if (response.ok) {
+			m3u8Content = await response.text();
+			console.log(`Original M3U8 content length: ${m3u8Content.length}`);
 		}
 
-		// Log response headers to debug
-		const responseHeaders = {};
-		response.headers.forEach((value, key) => {
-			responseHeaders[key] = value;
-		});
-		console.log('Response headers:', JSON.stringify(responseHeaders));
-
-		let m3u8Content = await response.text();
-		console.log(`Original M3U8 content length: ${m3u8Content.length}`);
-
+		// If empty, try alternative methods
 		if (m3u8Content.length === 0) {
-			// Try a direct fetch without Cloudflare Worker
-			const directFetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-			console.log(`Trying alternative fetch via: ${directFetchUrl}`);
+			console.log('Trying alternative fetch methods...');
 
-			const directResponse = await fetch(directFetchUrl);
-			if (!directResponse.ok) {
-				return corsResponse('Empty M3U8 content received from source and alternative fetch failed', 500);
+			// Method 1: Try with a different user agent
+			const altResponse1 = await fetch(targetUrl, {
+				headers: {
+					...headers,
+					'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+				},
+			});
+
+			if (altResponse1.ok) {
+				m3u8Content = await altResponse1.text();
+				console.log(`Alternative fetch 1 content length: ${m3u8Content.length}`);
 			}
 
-			m3u8Content = await directResponse.text();
-			console.log(`Alternative fetch content length: ${m3u8Content.length}`);
+			// Method 2: Try without Cloudflare's IP
+			if (m3u8Content.length === 0) {
+				const directFetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+				console.log(`Trying alternative fetch via: ${directFetchUrl}`);
+
+				const directResponse = await fetch(directFetchUrl);
+				if (directResponse.ok) {
+					m3u8Content = await directResponse.text();
+					console.log(`Alternative fetch 2 content length: ${m3u8Content.length}`);
+				}
+			}
+
+			// Method 3: Try with a different referer
+			if (m3u8Content.length === 0) {
+				const altResponse3 = await fetch(targetUrl, {
+					headers: {
+						...headers,
+						Referer: 'https://www.google.com/',
+					},
+				});
+
+				if (altResponse3.ok) {
+					m3u8Content = await altResponse3.text();
+					console.log(`Alternative fetch 3 content length: ${m3u8Content.length}`);
+				}
+			}
 
 			if (m3u8Content.length === 0) {
 				return corsResponse('Empty M3U8 content received from all sources', 500);
