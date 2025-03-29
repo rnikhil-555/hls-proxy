@@ -44,7 +44,6 @@ async function handleM3u8Proxy(request) {
 				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
 			Accept: '*/*',
 			'Accept-Language': 'en-US,en;q=0.9',
-			Origin: 'https://megacloud.club' || new URL(targetUrl).origin,
 			Referer: 'https://megacloud.club' || new URL(targetUrl).origin,
 			Connection: 'keep-alive',
 			...customHeaders,
