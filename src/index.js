@@ -77,10 +77,10 @@ async function handleM3u8Proxy(request) {
 							}
 						}
 						// Replace with proxied key URL
-						return line.replace(
-							keyPattern,
-							`$1/proxy/key?url=${encodeURIComponent(keyUrl)}&headers=${encodeURIComponent(headersParam || '')}$3`
-						);
+						const proxyKeyUrl = `${url.origin}/proxy/key?url=${encodeURIComponent(keyUrl)}&headers=${encodeURIComponent(
+							headersParam || ''
+						)}`;
+						return line.replace(keyPattern, `$1${proxyKeyUrl}$3`);
 					}
 				}
 				return line;
@@ -100,10 +100,10 @@ async function handleM3u8Proxy(request) {
 
 			// Check if this is another m3u8 file (variant playlist)
 			if (line.endsWith('.m3u8')) {
-				return `/proxy/m3u8?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
+				return `${url.origin}/proxy/m3u8?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
 			} else {
 				// For ts segments and other files
-				return `/proxy/segment?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
+				return `${url.origin}/proxy/segment?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
 			}
 		});
 
