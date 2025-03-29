@@ -39,25 +39,56 @@ async function handleM3u8Proxy(request) {
 
 		// Prepare headers with defaults and custom overrides
 		const headers = {
-			'User-Agent': request.headers.get('user-agent') || 'HLS-Proxy',
-			Referer: 'https://megacloud.club',
+			'User-Agent':
+				request.headers.get('user-agent') ||
+				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+			Accept: '*/*',
+			'Accept-Language': 'en-US,en;q=0.9',
+			Origin: 'https://megacloud.club' || new URL(targetUrl).origin,
+			Referer: 'https://megacloud.club' || new URL(targetUrl).origin,
+			Connection: 'keep-alive',
 			...customHeaders,
 		};
 
+		// Log the headers we're sending
+		console.log('Request headers:', JSON.stringify(headers));
+
 		const response = await fetch(targetUrl, {
 			headers,
+			redirect: 'follow',
 		});
 
 		if (!response.ok) {
-			console.error(`Upstream server error: ${response.status}`);
-			return corsResponse(`Upstream server error: ${response.status}`, response.status);
+			console.error(`Upstream server error: ${response.status} ${response.statusText}`);
+			return corsResponse(`Upstream server error: ${response.status} ${response.statusText}`, response.status);
 		}
+
+		// Log response headers to debug
+		const responseHeaders = {};
+		response.headers.forEach((value, key) => {
+			responseHeaders[key] = value;
+		});
+		console.log('Response headers:', JSON.stringify(responseHeaders));
 
 		let m3u8Content = await response.text();
 		console.log(`Original M3U8 content length: ${m3u8Content.length}`);
 
 		if (m3u8Content.length === 0) {
-			return corsResponse('Empty M3U8 content received from source', 500);
+			// Try a direct fetch without Cloudflare Worker
+			const directFetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+			console.log(`Trying alternative fetch via: ${directFetchUrl}`);
+
+			const directResponse = await fetch(directFetchUrl);
+			if (!directResponse.ok) {
+				return corsResponse('Empty M3U8 content received from source and alternative fetch failed', 500);
+			}
+
+			m3u8Content = await directResponse.text();
+			console.log(`Alternative fetch content length: ${m3u8Content.length}`);
+
+			if (m3u8Content.length === 0) {
+				return corsResponse('Empty M3U8 content received from all sources', 500);
+			}
 		}
 
 		// Fix for manifests that have everything on a single line
