@@ -50,7 +50,11 @@ async function handleM3u8Proxy(request) {
 			return corsResponse(`Upstream server error: ${response.status}`, response.status);
 		}
 
-		const m3u8Content = await response.text();
+		let m3u8Content = await response.text();
+
+		// Fix for manifests that have tags and content on the same line
+		// Split tags and content onto separate lines
+		m3u8Content = m3u8Content.replace(/(#EXT-X-[^:]+:[^\s]+)\s+([^\s#]+)/g, '$1\n$2');
 
 		// Parse the base URL for resolving relative paths
 		const parsedUrl = new URL(targetUrl);
@@ -63,12 +67,14 @@ async function handleM3u8Proxy(request) {
 		// Replace relative URLs with absolute ones and route through our proxy
 		const lines = m3u8Content.split('\n');
 		const modifiedLines = lines.map((line) => {
+			const trimmedLine = line.trim();
+
 			// Skip comments and tags, but handle EXT-X-KEY which may contain URIs
-			if (line.startsWith('#EXT-X-KEY')) {
+			if (trimmedLine.startsWith('#EXT-X-KEY')) {
 				// Handle encryption keys in the playlist
-				if (line.includes('URI="')) {
+				if (trimmedLine.includes('URI="')) {
 					const keyPattern = /(URI=")([^"]+)(")/;
-					const match = line.match(keyPattern);
+					const match = trimmedLine.match(keyPattern);
 					if (match) {
 						let keyUrl = match[2];
 						// Resolve relative key URL to absolute
@@ -83,32 +89,53 @@ async function handleM3u8Proxy(request) {
 						const proxyKeyUrl = `${proxyOrigin}/proxy/key?url=${encodeURIComponent(keyUrl)}&headers=${encodeURIComponent(
 							headersParam || ''
 						)}`;
-						return line.replace(keyPattern, `$1${proxyKeyUrl}$3`);
+						return trimmedLine.replace(keyPattern, `$1${proxyKeyUrl}$3`);
 					}
 				}
-				return line;
-			} else if (line.startsWith('#')) {
+				return trimmedLine;
+			} else if (trimmedLine.startsWith('#EXT-X-I-FRAME-STREAM-INF') && trimmedLine.includes('URI="')) {
+				// Handle I-FRAME-STREAM-INF which contains URI attribute
+				const uriPattern = /(URI=")([^"]+)(")/;
+				const match = trimmedLine.match(uriPattern);
+				if (match) {
+					let iframeUrl = match[2];
+					// Resolve relative URL to absolute
+					if (!iframeUrl.startsWith('http')) {
+						if (iframeUrl.startsWith('/')) {
+							iframeUrl = `${baseUrl}${iframeUrl}`;
+						} else {
+							iframeUrl = `${basePath}${iframeUrl}`;
+						}
+					}
+					// Replace with proxied URL
+					const proxyIframeUrl = `${proxyOrigin}/proxy/m3u8?url=${encodeURIComponent(iframeUrl)}&headers=${encodeURIComponent(
+						headersParam || ''
+					)}`;
+					return trimmedLine.replace(uriPattern, `$1${proxyIframeUrl}$3`);
+				}
+				return trimmedLine;
+			} else if (trimmedLine.startsWith('#')) {
 				// Pass through all other tags unchanged
-				return line;
-			} else if (line.trim() === '') {
+				return trimmedLine;
+			} else if (trimmedLine === '') {
 				// Pass through empty lines
-				return line;
+				return trimmedLine;
 			}
 
 			// Handle content lines (usually URLs to segments or other playlists)
 			let absoluteUrl;
-			if (line.startsWith('http')) {
-				absoluteUrl = line;
-			} else if (line.startsWith('/')) {
-				absoluteUrl = `${baseUrl}${line}`;
+			if (trimmedLine.startsWith('http')) {
+				absoluteUrl = trimmedLine;
+			} else if (trimmedLine.startsWith('/')) {
+				absoluteUrl = `${baseUrl}${trimmedLine}`;
 			} else {
-				absoluteUrl = `${basePath}${line}`;
+				absoluteUrl = `${basePath}${trimmedLine}`;
 			}
 
 			// Check if this is another m3u8 file (variant playlist)
-			if (line.endsWith('.m3u8')) {
+			if (trimmedLine.endsWith('.m3u8')) {
 				return `${proxyOrigin}/proxy/m3u8?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
-			} else if (line.match(/\.(ts|aac|mp4|vtt|webvtt)($|\?)/i)) {
+			} else if (trimmedLine.match(/\.(ts|aac|mp4|vtt|webvtt)($|\?)/i)) {
 				// For ts segments and other media files
 				return `${proxyOrigin}/proxy/segment?url=${encodeURIComponent(absoluteUrl)}&headers=${encodeURIComponent(headersParam || '')}`;
 			} else {
