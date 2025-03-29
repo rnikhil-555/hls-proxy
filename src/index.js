@@ -40,7 +40,7 @@ async function handleM3u8Proxy(request) {
 		// Prepare headers with defaults and custom overrides
 		const headers = {
 			'User-Agent': request.headers.get('user-agent') || 'HLS-Proxy',
-			Referer: new URL(targetUrl).origin,
+			Referer: 'https://megacloud.club',
 			...customHeaders,
 		};
 
