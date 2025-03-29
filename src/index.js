@@ -1,8 +1,3 @@
-import { Router } from 'itty-router';
-
-// Create a new router
-const router = Router();
-
 // Helper function to parse headers from query parameter
 function parseCustomHeaders(headersParam) {
 	if (!headersParam) return {};
@@ -28,20 +23,8 @@ function corsResponse(body, status = 200, contentType = 'text/plain') {
 	});
 }
 
-// Handle OPTIONS requests for CORS
-router.options('*', () => {
-	return new Response(null, {
-		status: 204,
-		headers: {
-			'Access-Control-Allow-Origin': '*',
-			'Access-Control-Allow-Methods': 'GET, OPTIONS',
-			'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
-		},
-	});
-});
-
 // Proxy for m3u8 playlists
-router.get('/proxy/m3u8', async (request) => {
+async function handleM3u8Proxy(request) {
 	const url = new URL(request.url);
 	const targetUrl = url.searchParams.get('url');
 	const headersParam = url.searchParams.get('headers');
@@ -132,10 +115,10 @@ router.get('/proxy/m3u8', async (request) => {
 		console.error('Error proxying m3u8:', error.message);
 		return corsResponse(`Proxy error: ${error.message}`, 500);
 	}
-});
+}
 
 // Proxy for video segments (ts files, etc.)
-router.get('/proxy/segment', async (request) => {
+async function handleSegmentProxy(request) {
 	const url = new URL(request.url);
 	const targetUrl = url.searchParams.get('url');
 	const headersParam = url.searchParams.get('headers');
@@ -186,10 +169,10 @@ router.get('/proxy/segment', async (request) => {
 		console.error('Error proxying segment:', error.message);
 		return corsResponse(`Proxy error: ${error.message}`, 500);
 	}
-});
+}
 
 // Add handler for encryption keys
-router.get('/proxy/key', async (request) => {
+async function handleKeyProxy(request) {
 	const url = new URL(request.url);
 	const targetUrl = url.searchParams.get('url');
 	const headersParam = url.searchParams.get('headers');
@@ -240,10 +223,10 @@ router.get('/proxy/key', async (request) => {
 		console.error('Error proxying key:', error.message);
 		return corsResponse(`Proxy error: ${error.message}`, 500);
 	}
-});
+}
 
 // Simple test page
-router.get('/', () => {
+function handleHomePage() {
 	const html = `
     <!DOCTYPE html>
     <html>
@@ -449,16 +432,40 @@ router.get('/', () => {
 			'Access-Control-Allow-Origin': '*',
 		},
 	});
-});
-
-// Catch-all handler for any other requests
-router.all('*', () => corsResponse('Not Found', 404));
+}
 
 // Main event handler for the worker
 export default {
 	async fetch(request, env, ctx) {
 		try {
-			return await router.handle(request);
+			const url = new URL(request.url);
+			const path = url.pathname;
+
+			// Handle OPTIONS requests for CORS
+			if (request.method === 'OPTIONS') {
+				return new Response(null, {
+					status: 204,
+					headers: {
+						'Access-Control-Allow-Origin': '*',
+						'Access-Control-Allow-Methods': 'GET, OPTIONS',
+						'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
+					},
+				});
+			}
+
+			// Route requests based on path
+			if (path === '/') {
+				return handleHomePage();
+			} else if (path === '/proxy/m3u8') {
+				return await handleM3u8Proxy(request);
+			} else if (path === '/proxy/segment') {
+				return await handleSegmentProxy(request);
+			} else if (path === '/proxy/key') {
+				return await handleKeyProxy(request);
+			} else {
+				// Catch-all for any other requests
+				return corsResponse('Not Found', 404);
+			}
 		} catch (error) {
 			console.error('Unhandled error:', error);
 			return corsResponse(`Server error: ${error.message}`, 500);
