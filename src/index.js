@@ -35,6 +35,8 @@ async function handleM3u8Proxy(request) {
 	}
 
 	try {
+		console.log(`Fetching M3U8 from: ${targetUrl}`);
+
 		// Prepare headers with defaults and custom overrides
 		const headers = {
 			'User-Agent': request.headers.get('user-agent') || 'HLS-Proxy',
@@ -47,14 +49,23 @@ async function handleM3u8Proxy(request) {
 		});
 
 		if (!response.ok) {
+			console.error(`Upstream server error: ${response.status}`);
 			return corsResponse(`Upstream server error: ${response.status}`, response.status);
 		}
 
 		let m3u8Content = await response.text();
+		console.log(`Original M3U8 content length: ${m3u8Content.length}`);
 
-		// Fix for manifests that have tags and content on the same line
-		// Split tags and content onto separate lines
-		m3u8Content = m3u8Content.replace(/(#EXT-X-[^:]+:[^\s]+)\s+([^\s#]+)/g, '$1\n$2');
+		if (m3u8Content.length === 0) {
+			return corsResponse('Empty M3U8 content received from source', 500);
+		}
+
+		// Fix for manifests that have everything on a single line
+		// First, add newlines after each tag
+		m3u8Content = m3u8Content.replace(/(#EXT[^#]*?)(\s+#)/g, '$1\n$2');
+
+		// Then separate tags from their content
+		m3u8Content = m3u8Content.replace(/(#EXT-X-STREAM-INF:[^\n]+)\s+([^\s#][^\n]*)/g, '$1\n$2');
 
 		// Parse the base URL for resolving relative paths
 		const parsedUrl = new URL(targetUrl);
@@ -69,32 +80,13 @@ async function handleM3u8Proxy(request) {
 		const modifiedLines = lines.map((line) => {
 			const trimmedLine = line.trim();
 
-			// Skip comments and tags, but handle EXT-X-KEY which may contain URIs
-			if (trimmedLine.startsWith('#EXT-X-KEY')) {
-				// Handle encryption keys in the playlist
-				if (trimmedLine.includes('URI="')) {
-					const keyPattern = /(URI=")([^"]+)(")/;
-					const match = trimmedLine.match(keyPattern);
-					if (match) {
-						let keyUrl = match[2];
-						// Resolve relative key URL to absolute
-						if (!keyUrl.startsWith('http')) {
-							if (keyUrl.startsWith('/')) {
-								keyUrl = `${baseUrl}${keyUrl}`;
-							} else {
-								keyUrl = `${basePath}${keyUrl}`;
-							}
-						}
-						// Replace with proxied key URL
-						const proxyKeyUrl = `${proxyOrigin}/proxy/key?url=${encodeURIComponent(keyUrl)}&headers=${encodeURIComponent(
-							headersParam || ''
-						)}`;
-						return trimmedLine.replace(keyPattern, `$1${proxyKeyUrl}$3`);
-					}
-				}
-				return trimmedLine;
-			} else if (trimmedLine.startsWith('#EXT-X-I-FRAME-STREAM-INF') && trimmedLine.includes('URI="')) {
-				// Handle I-FRAME-STREAM-INF which contains URI attribute
+			// Skip empty lines
+			if (trimmedLine === '') {
+				return '';
+			}
+
+			// Handle I-FRAME-STREAM-INF which contains URI attribute
+			if (trimmedLine.startsWith('#EXT-X-I-FRAME-STREAM-INF') && trimmedLine.includes('URI="')) {
 				const uriPattern = /(URI=")([^"]+)(")/;
 				const match = trimmedLine.match(uriPattern);
 				if (match) {
@@ -113,12 +105,30 @@ async function handleM3u8Proxy(request) {
 					)}`;
 					return trimmedLine.replace(uriPattern, `$1${proxyIframeUrl}$3`);
 				}
-				return trimmedLine;
-			} else if (trimmedLine.startsWith('#')) {
-				// Pass through all other tags unchanged
-				return trimmedLine;
-			} else if (trimmedLine === '') {
-				// Pass through empty lines
+			}
+			// Handle encryption keys
+			else if (trimmedLine.startsWith('#EXT-X-KEY') && trimmedLine.includes('URI="')) {
+				const keyPattern = /(URI=")([^"]+)(")/;
+				const match = trimmedLine.match(keyPattern);
+				if (match) {
+					let keyUrl = match[2];
+					// Resolve relative key URL to absolute
+					if (!keyUrl.startsWith('http')) {
+						if (keyUrl.startsWith('/')) {
+							keyUrl = `${baseUrl}${keyUrl}`;
+						} else {
+							keyUrl = `${basePath}${keyUrl}`;
+						}
+					}
+					// Replace with proxied key URL
+					const proxyKeyUrl = `${proxyOrigin}/proxy/key?url=${encodeURIComponent(keyUrl)}&headers=${encodeURIComponent(
+						headersParam || ''
+					)}`;
+					return trimmedLine.replace(keyPattern, `$1${proxyKeyUrl}$3`);
+				}
+			}
+			// Pass through all other tags unchanged
+			else if (trimmedLine.startsWith('#')) {
 				return trimmedLine;
 			}
 
@@ -145,11 +155,21 @@ async function handleM3u8Proxy(request) {
 		});
 
 		const modifiedContent = modifiedLines.join('\n');
+		console.log(`Modified M3U8 content length: ${modifiedContent.length}`);
 
 		// Return the modified m3u8 with appropriate content type
-		return corsResponse(modifiedContent, 200, 'application/vnd.apple.mpegurl');
+		return new Response(modifiedContent, {
+			status: 200,
+			headers: {
+				'Access-Control-Allow-Origin': '*',
+				'Access-Control-Allow-Methods': 'GET, OPTIONS',
+				'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept',
+				'Content-Type': 'application/vnd.apple.mpegurl',
+				'Content-Length': modifiedContent.length.toString(),
+			},
+		});
 	} catch (error) {
-		console.error('Error proxying m3u8:', error.message);
+		console.error('Error proxying m3u8:', error.message, error.stack);
 		return corsResponse(`Proxy error: ${error.message}`, 500);
 	}
 }
