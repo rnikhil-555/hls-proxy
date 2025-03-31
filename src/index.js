@@ -217,7 +217,7 @@ async function handleM3u8Proxy(request) {
 		// Log the headers we're sending
 		console.log('Request headers:', JSON.stringify(headers));
 
-		// Fetch the M3U8 content
+		// First try with Cloudflare Worker
 		let response = await fetch(targetUrl, {
 			headers,
 			redirect: 'follow',
@@ -237,8 +237,53 @@ async function handleM3u8Proxy(request) {
 			console.log(`Original M3U8 content length: ${m3u8Content.length}`);
 		}
 
+		// If empty, try alternative methods
 		if (m3u8Content.length === 0) {
-			return corsResponse('Empty M3U8 content received from source', 500);
+			console.log('Trying alternative fetch methods...');
+
+			// Method 1: Try with a different user agent
+			const altResponse1 = await fetch(targetUrl, {
+				headers: {
+					...headers,
+					'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+				},
+			});
+
+			if (altResponse1.ok) {
+				m3u8Content = await altResponse1.text();
+				console.log(`Alternative fetch 1 content length: ${m3u8Content.length}`);
+			}
+
+			// Method 2: Try without Cloudflare's IP
+			if (m3u8Content.length === 0) {
+				const directFetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+				console.log(`Trying alternative fetch via: ${directFetchUrl}`);
+
+				const directResponse = await fetch(directFetchUrl);
+				if (directResponse.ok) {
+					m3u8Content = await directResponse.text();
+					console.log(`Alternative fetch 2 content length: ${m3u8Content.length}`);
+				}
+			}
+
+			// Method 3: Try with a different referer
+			if (m3u8Content.length === 0) {
+				const altResponse3 = await fetch(targetUrl, {
+					headers: {
+						...headers,
+						Referer: 'https://www.google.com/',
+					},
+				});
+
+				if (altResponse3.ok) {
+					m3u8Content = await altResponse3.text();
+					console.log(`Alternative fetch 3 content length: ${m3u8Content.length}`);
+				}
+			}
+
+			if (m3u8Content.length === 0) {
+				return corsResponse('Empty M3U8 content received from all sources', 500);
+			}
 		}
 
 		const parsedUrl = new URL(targetUrl);
