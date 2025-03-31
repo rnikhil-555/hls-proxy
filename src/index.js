@@ -187,21 +187,104 @@ function parseCustomHeaders(headersParam) {
 	}
 }
 
-async function handleM3u8(url, request) {
+async function handleM3u8Proxy(request) {
+	const url = new URL(request.url);
 	const targetUrl = url.searchParams.get('url');
-	const customHeaders = parseCustomHeaders(url.searchParams.get('headers'));
+	const headersParam = url.searchParams.get('headers');
+	const customHeaders = parseCustomHeaders(headersParam);
 
-	if (!targetUrl) return new Response('Missing url parameter', { status: 400 });
-
-	const headers = {
-		'User-Agent': request.headers.get('user-agent') || 'HLS-Proxy',
-		Referer: new URL(targetUrl).origin,
-		...customHeaders,
-	};
+	if (!targetUrl) {
+		return corsResponse('Missing url parameter', 400);
+	}
 
 	try {
-		const response = await fetch(targetUrl, { headers });
-		let m3u8Content = await response.text();
+		console.log(`Fetching M3U8 from: ${targetUrl}`);
+
+		// Prepare headers with defaults and custom overrides
+		const headers = {
+			'User-Agent':
+				request.headers.get('user-agent') ||
+				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+			Accept: '*/*',
+			'Accept-Language': 'en-US,en;q=0.9',
+			Referer: 'https://megacloud.club',
+			Connection: 'keep-alive',
+			'X-Forwarded-For': request.headers.get('cf-connecting-ip') || '127.0.0.1',
+			'X-Real-IP': request.headers.get('cf-connecting-ip') || '127.0.0.1',
+			...customHeaders,
+		};
+
+		// Log the headers we're sending
+		console.log('Request headers:', JSON.stringify(headers));
+
+		// First try with Cloudflare Worker
+		let response = await fetch(targetUrl, {
+			headers,
+			redirect: 'follow',
+		});
+
+		// Log response status and headers
+		console.log(`Response status: ${response.status} ${response.statusText}`);
+		const responseHeaders = {};
+		response.headers.forEach((value, key) => {
+			responseHeaders[key] = value;
+		});
+		console.log('Response headers:', JSON.stringify(responseHeaders));
+
+		let m3u8Content = '';
+		if (response.ok) {
+			m3u8Content = await response.text();
+			console.log(`Original M3U8 content length: ${m3u8Content.length}`);
+		}
+
+		// If empty, try alternative methods
+		if (m3u8Content.length === 0) {
+			console.log('Trying alternative fetch methods...');
+
+			// Method 1: Try with a different user agent
+			const altResponse1 = await fetch(targetUrl, {
+				headers: {
+					...headers,
+					'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+				},
+			});
+
+			if (altResponse1.ok) {
+				m3u8Content = await altResponse1.text();
+				console.log(`Alternative fetch 1 content length: ${m3u8Content.length}`);
+			}
+
+			// Method 2: Try without Cloudflare's IP
+			if (m3u8Content.length === 0) {
+				const directFetchUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+				console.log(`Trying alternative fetch via: ${directFetchUrl}`);
+
+				const directResponse = await fetch(directFetchUrl);
+				if (directResponse.ok) {
+					m3u8Content = await directResponse.text();
+					console.log(`Alternative fetch 2 content length: ${m3u8Content.length}`);
+				}
+			}
+
+			// Method 3: Try with a different referer
+			if (m3u8Content.length === 0) {
+				const altResponse3 = await fetch(targetUrl, {
+					headers: {
+						...headers,
+						Referer: 'https://www.google.com/',
+					},
+				});
+
+				if (altResponse3.ok) {
+					m3u8Content = await altResponse3.text();
+					console.log(`Alternative fetch 3 content length: ${m3u8Content.length}`);
+				}
+			}
+
+			if (m3u8Content.length === 0) {
+				return corsResponse('Empty M3U8 content received from all sources', 500);
+			}
+		}
 
 		const parsedUrl = new URL(targetUrl);
 		const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
@@ -242,14 +325,10 @@ async function handleM3u8(url, request) {
 			}
 		});
 
-		return new Response(modifiedLines.join('\n'), {
-			headers: {
-				'Content-Type': 'application/vnd.apple.mpegurl',
-				...CORS_HEADERS,
-			},
-		});
+		return corsResponse(modifiedLines.join('\n'), 200, 'application/vnd.apple.mpegurl');
 	} catch (error) {
-		return new Response(`Proxy error: ${error.message}`, { status: 500 });
+		console.error('Error proxying m3u8:', error.message, error.stack);
+		return corsResponse(`Proxy error: ${error.message}`, 500);
 	}
 }
 
@@ -299,7 +378,7 @@ export default {
 		}
 
 		if (path === '/proxy/m3u8') {
-			return handleM3u8(url, request);
+			return handleM3u8Proxy(request);
 		}
 
 		if (path === '/proxy/segment' || path === '/proxy/key') {
